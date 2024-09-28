@@ -260,10 +260,91 @@ def location_input():
     while not location_list:
         location_input = input("Enter the locations to search for, separated by commas: ")
         location_list = [loc.strip() for loc in location_input.split(",") if loc.strip()]
+        location_list = random.sample(location_list, len(location_list))
         if not location_list:
             print("Please enter at least one valid location.")
     print(f"Locations to be searched: {location_list}\n")
     return location_list
+
+def company_input():
+    """Prompts the user for desired locations."""
+    company_list = []
+    while not company_list:
+        company_input = input("Enter the companies to search for, separated by commas: ")
+        # Randomize the order of companies
+        company_list = [comp.strip() for comp in company_input.split(",") if comp.strip()]
+        company_list = random.sample(company_list, len(company_list))
+        if not company_list:
+            print("Please enter at least one valid company.")
+    print(f"Companies to be searched: {company_list}\n")
+    return company_list
+
+def search_company(companies):
+    """Sets the company filters and clicks the 'Show results' button relative to the 'Cancel companies filter' button."""
+    try:
+        # Click on the 'Companies' filter using its unique ID
+        print("Attempting to locate the 'Companies' filter button...")
+        company_filter = WebDriverWait(driver, 20).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[@aria-label='Current company filter. Clicking this button displays all Current company filter options.']"))
+        )
+        scroll_to_element(company_filter)
+        company_filter.click()
+        random_delay(1, 2)
+        
+        for company in companies:
+            # Enter the company
+            print(f"Entering company: {company}")
+            company_input = WebDriverWait(driver, 20).until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//input[contains(@placeholder, 'Add a company')]")
+                )
+            )
+            scroll_to_element(company_input)
+            company_input.clear()
+            company_input.send_keys(company)
+            random_delay(2, 4)
+
+            # Wait for the dropdown options to load and select the company
+            # If the exact company name is not found, skip to the next company
+            try:
+                company_option = WebDriverWait(driver, 20).until(
+                    EC.element_to_be_clickable((By.XPATH, f"//li//span[text()='{company}']"))
+                )
+                scroll_to_element(company_option)
+                company_option.click()
+                random_delay(2, 4)
+                print(f"Company '{company}' applied.")
+            except Exception as e:
+                print(f"Company '{company}' not found in the dropdown. Skipping to the next company.")
+                continue
+
+        # Locate the 'Cancel Companies filter' button
+        print("Attempting to locate the 'Cancel Companies filter' button...")
+        cancel_button = WebDriverWait(driver, 20).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[@aria-label='Cancel Current company filter']"))
+        )
+        scroll_to_element(cancel_button)
+
+        # From the cancel button, find the next sibling button, which should be 'Show results'
+        print("Locating the 'Show results' button relative to the 'Cancel' button...")
+        apply_button_xpath = "./following-sibling::button[1]"
+        apply_button = cancel_button.find_element(By.XPATH, apply_button_xpath)
+
+        # Verify the button text to ensure it's the correct button
+        button_text = apply_button.text.strip()
+        if 'Show results' in button_text:
+            print("Found the 'Show results' button. Attempting to click it...")
+            scroll_to_element(apply_button)
+            apply_button.click()
+            random_delay(2, 3)
+            print("Company filter applied successfully.\n")
+        else:
+            print("The button following the 'Cancel' button does not have the expected text. Cannot proceed.")
+
+    except Exception as e:
+        print(f"Error setting company: {e}")
+        traceback.print_exc()
+        driver.save_screenshot('error_search_company.png')
 
 # Main execution
 if __name__ == "__main__":
@@ -316,11 +397,13 @@ if __name__ == "__main__":
     search_term = search_term_input()
     levels = conn_level_input()
     locations = location_input()
+    companies = company_input()
     pages_to_navigate = pages_input()
 
     search_people(search_term)
-    search_location(locations)
     conn_level(levels)
+    search_location(locations)
+    search_company(companies)
 
     # Loop through the specified number of pages
     for _ in range(pages_to_navigate):
