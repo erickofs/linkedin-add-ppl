@@ -10,6 +10,11 @@ class BrowserManager:
     """Utility class to configure and start or connect to a Chrome WebDriver."""
 
     def __init__(self, debug_port: int = 9222):
+
+class BrowserManager:
+    """Utility class to configure and start a Chrome WebDriver."""
+
+    def __init__(self):
         self.options = webdriver.ChromeOptions()
         self.options.add_argument("--start-maximized")
         self.options.add_argument("--log-level=3")
@@ -44,6 +49,7 @@ class BrowserManager:
         print(f"Using Chrome profile: {profile_directory}\n")
 
     def start(self):
+
         """Start Chrome or attach to an existing instance."""
         if self.driver:
             return self.driver
@@ -56,4 +62,6 @@ class BrowserManager:
         self.driver = webdriver.Chrome(
             service=Service(ChromeDriverManager().install()), options=self.options
         )
+        """Launch Chrome with the configured options."""
+        self.driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=self.options) 
         return self.driver
