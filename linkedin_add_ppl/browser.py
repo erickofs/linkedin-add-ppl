@@ -2,12 +2,14 @@ import os
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
+import urllib.request
+import urllib.error
 
 
 class BrowserManager:
-    """Utility class to configure and start a Chrome WebDriver."""
+    """Utility class to configure and start or connect to a Chrome WebDriver."""
 
-    def __init__(self):
+    def __init__(self, debug_port: int = 9222):
         self.options = webdriver.ChromeOptions()
         self.options.add_argument("--start-maximized")
         self.options.add_argument("--log-level=3")
@@ -15,6 +17,18 @@ class BrowserManager:
         self.options.add_argument("--disable-extensions")
         self.options.add_argument("--disable-popup-blocking")
         self.driver = None
+        self.debug_port = debug_port
+
+    def _is_browser_running(self) -> bool:
+        """Check whether Chrome is already running with the debugging port."""
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{self.debug_port}/json/version",
+                timeout=1,
+            ) as response:
+                return response.status == 200
+        except Exception:
+            return False
 
     def choose_profile(self):
         """Ask the user for a Chrome profile and configure the options."""
@@ -30,6 +44,16 @@ class BrowserManager:
         print(f"Using Chrome profile: {profile_directory}\n")
 
     def start(self):
-        """Launch Chrome with the configured options."""
-        self.driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=self.options)
+        """Start Chrome or attach to an existing instance."""
+        if self.driver:
+            return self.driver
+
+        if self._is_browser_running():
+            self.options.debugger_address = f"127.0.0.1:{self.debug_port}"
+        else:
+            self.options.add_argument(f"--remote-debugging-port={self.debug_port}")
+
+        self.driver = webdriver.Chrome(
+            service=Service(ChromeDriverManager().install()), options=self.options
+        )
         return self.driver
