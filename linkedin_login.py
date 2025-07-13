@@ -1,10 +1,17 @@
 from playwright.sync_api import sync_playwright
 import time
+import os
+import json
+from cryptography.fernet import Fernet
+from pathlib import Path
 
 class LinkedInLogin:
-    def __init__(self, email, password):
-        self.email = email
-        self.password = password
+    def __init__(self, email=None, password=None):
+        if email is None or password is None:
+            self.email, self.password = self.get_credentials()
+        else:
+            self.email = email
+            self.password = password
         self.browser = None
         self.page = None
 
@@ -14,12 +21,55 @@ class LinkedInLogin:
         self.page = self.browser.new_page()
 
     def login(self):
-        print("Acessando LinkedIn...")
-        self.page.goto("https://www.linkedin.com/login")
-        self.page.fill('input[name="session_key"]', self.email)
-        self.page.fill('input[name="session_password"]', self.password)
-        self.page.click('button[type="submit"]')
-        print("Login realizado!")
+        while True:
+            try:
+                print("Acessando LinkedIn...")
+                self.page.goto("https://www.linkedin.com/login")
+                self.page.fill('input[name="session_key"]', self.email)
+                self.page.fill('input[name="session_password"]', self.password)
+                self.page.click('button[type="submit"]')
+                
+                # Aguarda 5 segundos para verificar se há erro de login
+                try:
+                    error = self.page.wait_for_selector('//div[contains(@class, "alert") or contains(@class, "error")]', timeout=5000)
+                    if error:
+                        error_text = error.inner_text()
+                        print(f"Erro no login: {error_text}")
+                        retry = input("Login falhou. Deseja tentar novamente? (s/n): ").lower()
+                        if retry != 's':
+                            print("Abortando o script...")
+                            self.close()
+                            exit()
+                        continue
+                except Exception:
+                    # Se não encontrou erro, assume que o login foi bem sucedido
+                    pass
+                
+                # Verifica se chegou na página inicial do LinkedIn procurando o elemento main do feed
+                try:
+                    self.page.wait_for_selector('main[aria-label="Main Feed"]', timeout=5000)
+                    print("Login realizado com sucesso!")
+                    break
+                except Exception:
+                    # Tenta outras variações do seletor (para diferentes idiomas)
+                    try:
+                        self.page.wait_for_selector('main[aria-label="Feed principal"]', timeout=2000)
+                        print("Login realizado com sucesso!")
+                        break
+                    except Exception:
+                        retry = input("Possível falha no login. Deseja tentar novamente? (s/n): ").lower()
+                        if retry != 's':
+                            print("Abortando o script...")
+                            self.close()
+                            exit()
+                    
+            except Exception as e:
+                print(f"Erro inesperado durante o login: {str(e)}")
+                retry = input("Ocorreu um erro. Deseja tentar novamente? (s/n): ").lower()
+                if retry != 's':
+                    print("Abortando o script...")
+                    self.close()
+                    exit()
 
     def close(self):
         self.browser.close()
@@ -60,8 +110,33 @@ class LinkedInLogin:
 
     def apply_location_filter(self, locations):
         try:
-            print("Procurando botão de localidade pelo ID 'searchFilter_geoUrn'...")
-            location_button = self.page.wait_for_selector('button#searchFilter_geoUrn', timeout=7000)
+            print("Procurando botão de localidade...")
+            location_button = None
+            selectors = [
+                'button#searchFilter_geoUrn',
+                'button.search-reusables__filter-pill-button[aria-label*="Locations filter"]',
+                'button.artdeco-pill.artdeco-pill--slate.search-reusables__filter-pill-button',
+                'button[aria-label*="Locations filter"]',
+                'button.reusable-search-filter-trigger-and-dropdown__trigger[id="searchFilter_geoUrn"]',
+                '//button[contains(@class, "search-reusables__filter-pill-button") and contains(@aria-label, "Location")]',
+                '//button[contains(@class, "artdeco-pill") and @id="searchFilter_geoUrn"]'
+            ]
+            
+            for selector in selectors:
+                try:
+                    if selector.startswith('//'):
+                        location_button = self.page.wait_for_selector(selector, timeout=2000)
+                    else:
+                        location_button = self.page.wait_for_selector(selector, timeout=2000)
+                    if location_button and location_button.is_visible():
+                        break
+                except Exception:
+                    continue
+                    
+            if not location_button:
+                print("Botão de filtro de localidade não encontrado.")
+                return
+
             location_button.click()
             self.page.wait_for_timeout(1200)
 
@@ -71,15 +146,22 @@ class LinkedInLogin:
                 # O campo é um <input> com placeholder "Add a location" ou "Adicionar uma localização"
                 # Vamos pegar o primeiro input visível, não hidden
                 input_selectors = [
-                    'input[placeholder="Add a location"]',
-                    'input[placeholder="Adicionar uma localização"]',
-                    'input[aria-label="Add a location"]',
-                    'input[aria-label="Adicionar uma localização"]',
+                    'input.basic-input[placeholder="Add a location"]',
+                    'input.basic-input[aria-label="Add a location"]',
+                    'input[role="combobox"][placeholder="Add a location"]',
+                    'input.basic-input[placeholder="Adicionar uma localização"]',
+                    'input[role="combobox"][aria-label="Add a location"]',
+                    'input.basic-input[dir="auto"][role="combobox"]',
+                    '//input[@class="basic-input" and @placeholder="Add a location"]',
+                    '//input[@role="combobox" and contains(@class, "basic-input")]'
                 ]
                 location_input = None
                 for sel in input_selectors:
                     try:
-                        location_input = self.page.query_selector(sel)
+                        if sel.startswith('//'):
+                            location_input = self.page.wait_for_selector(sel, timeout=2000)
+                        else:
+                            location_input = self.page.wait_for_selector(sel, timeout=2000)
                         if location_input and location_input.is_visible():
                             break
                     except Exception:
@@ -93,27 +175,47 @@ class LinkedInLogin:
                 location_input.type(loc, delay=50)  # Digita como humano
                 self.page.wait_for_timeout(1400)  # Aguarda o autocomplete carregar
 
-                # Busca opções de autocomplete
-                options = self.page.query_selector_all(
-                    '//div[contains(@class,"basic-typeahead__selectable")]//span[contains(@class,"search-typeahead-v2__hit-text")]'
-                )
-
+                # Busca opções de autocomplete usando vários seletores
+                option_selectors = [
+                    '//div[contains(@class,"basic-typeahead__selectable")]//span[contains(@class,"search-typeahead-v2__hit-text")]',
+                    '//div[contains(@class,"basic-typeahead__selectable")]//span[contains(@class,"search-typeahead-v2__hit-info")]',
+                    '//div[contains(@class,"basic-typeahead__selectable")]//span',
+                    f'//div[contains(@class,"basic-typeahead__selectable")]//span[contains(text(),"{loc}")]'
+                ]
+                
                 found = False
-                for opt in options:
-                    option_text = opt.inner_text().strip()
-                    if option_text.lower() == loc.lower():
-                        print(f"Selecionando local: {option_text}")
-                        opt.click()
-                        found = True
-                        self.page.wait_for_timeout(800)
+                for selector in option_selectors:
+                    if found:
                         break
+                    try:
+                        options = self.page.query_selector_all(selector)
+                        if not options:
+                            continue
+                            
+                        for opt in options:
+                            try:
+                                option_text = opt.inner_text().strip()
+                                if option_text.lower() == loc.lower() or loc.lower() in option_text.lower():
+                                    print(f"Selecionando local: {option_text}")
+                                    opt.click()
+                                    found = True
+                                    self.page.wait_for_timeout(800)
+                                    break
+                            except Exception:
+                                continue
+                            
+                        if not found and options:
+                            # Se não encontrou correspondência exata, usa a primeira opção
+                            first_option_text = options[0].inner_text().strip()
+                            print(f"Localização '{loc}' não encontrada exatamente. Selecionando primeira opção: {first_option_text}")
+                            options[0].click()
+                            found = True
+                            self.page.wait_for_timeout(800)
+                    except Exception:
+                        continue
+                        
                 if not found:
-                    if options:
-                        print(f"Localização '{loc}' não encontrada exatamente. Selecionando primeira opção: {options[0].inner_text().strip()}")
-                        options[0].click()
-                        self.page.wait_for_timeout(800)
-                    else:
-                        print(f"Nenhuma opção encontrada para '{loc}'.")
+                    print(f"Nenhuma opção encontrada para '{loc}'.")
             # Botão "Show results"/"Mostrar resultados"
             print("Procurando botão para aplicar filtro de localidade...")
             try:
@@ -135,34 +237,76 @@ class LinkedInLogin:
         try:
             print("Tentando localizar o botão de filtro de empresa...")
             company_button = None
-            try:
-                company_button = self.page.wait_for_selector('button#searchFilter_currentCompany', timeout=5000)
-            except Exception:
+            selectors = [
+                'button#searchFilter_currentCompany',
+                'button[aria-controls="advanced-filter-currentCompany-reloaded"]',
+                '//button[contains(@aria-label, "Current company") or contains(@aria-label, "Empresa atual")]',
+                '//button[contains(.,"Empresas atuais") or contains(.,"Current companies") or contains(.,"Empresas") or contains(.,"Companies")]'
+            ]
+            
+            for selector in selectors:
                 try:
-                    company_button = self.page.wait_for_selector('//button[contains(.,"Empresas atuais") or contains(.,"Current companies") or contains(.,"Empresas") or contains(.,"Companies")]', timeout=5000)
+                    if selector.startswith('//'):
+                        company_button = self.page.wait_for_selector(selector, timeout=2000)
+                    else:
+                        company_button = self.page.wait_for_selector(selector, timeout=2000)
+                    if company_button:
+                        break
                 except Exception:
-                    print("Botão de filtro de empresa não encontrado.")
-                    return
+                    continue
+                    
+            if not company_button:
+                print("Botão de filtro de empresa não encontrado.")
+                return
             company_button.click()
             self.page.wait_for_timeout(1500)
 
             for company in companies:
                 company = company.strip()
                 print(f"Digitando empresa: {company}")
-                input_xpath = '//input[contains(@placeholder, "Adicionar uma empresa") or contains(@placeholder, "Add a company")]'
-                company_input = self.page.wait_for_selector(input_xpath, timeout=4000)
+                input_selectors = [
+                    '//input[contains(@placeholder, "Adicionar uma empresa") or contains(@placeholder, "Add a company")]',
+                    '//input[@aria-label="Adicionar uma empresa" or @aria-label="Add a company"]',
+                    'input.search-basic-typeahead__input'
+                ]
+                
+                company_input = None
+                for selector in input_selectors:
+                    try:
+                        company_input = self.page.wait_for_selector(selector, timeout=2000)
+                        if company_input and company_input.is_visible():
+                            break
+                    except Exception:
+                        continue
+                
+                if not company_input:
+                    print("Campo de empresa não encontrado.")
+                    continue
+                
                 company_input.fill("")
                 company_input.fill(company)
                 self.page.wait_for_timeout(1500)
 
-                option_xpath = f'//li//span[text()="{company}"]'
-                try:
-                    company_option = self.page.wait_for_selector(option_xpath, timeout=4000)
-                    company_option.click()
-                    print(f"Empresa '{company}' aplicada.")
-                except Exception:
+                option_selectors = [
+                    f'//li//span[text()="{company}"]',
+                    f'//div[contains(@class,"basic-typeahead__selectable")]//span[contains(text(),"{company}")]',
+                    f'//div[contains(@class,"search-typeahead-v2__hit-info")]//span[contains(text(),"{company}")]'
+                ]
+                
+                found = False
+                for selector in option_selectors:
+                    try:
+                        company_option = self.page.wait_for_selector(selector, timeout=2000)
+                        if company_option and company_option.is_visible():
+                            company_option.click()
+                            print(f"Empresa '{company}' aplicada.")
+                            found = True
+                            break
+                    except Exception:
+                        continue
+                
+                if not found:
                     print(f"Não encontrou sugestão para a empresa: {company}")
-                    continue
                 self.page.wait_for_timeout(1000)
 
             print("Tentando localizar botão 'Cancelar filtro de empresas'...")
@@ -324,3 +468,76 @@ class LinkedInLogin:
                     print("Não encontrou botão de próxima página. Fim da navegação.")
                     break
         print(f"\nTotal de convites enviados em {current_page} página(s): {total_sent}")
+
+    @staticmethod
+    def _get_key_path():
+        return os.path.join(str(Path.home()), '.linkedin_key')
+
+    @staticmethod
+    def _get_credentials_path():
+        return os.path.join(str(Path.home()), '.linkedin_credentials')
+
+    @staticmethod
+    def _create_key():
+        key = Fernet.generate_key()
+        with open(LinkedInLogin._get_key_path(), 'wb') as key_file:
+            key_file.write(key)
+        return key
+
+    @staticmethod
+    def _load_key():
+        try:
+            with open(LinkedInLogin._get_key_path(), 'rb') as key_file:
+                return key_file.read()
+        except FileNotFoundError:
+            return LinkedInLogin._create_key()
+
+    def _encrypt_credentials(self, email, password):
+        key = self._load_key()
+        f = Fernet(key)
+        credentials = {
+            'email': email,
+            'password': password
+        }
+        encrypted_data = f.encrypt(json.dumps(credentials).encode())
+        with open(self._get_credentials_path(), 'wb') as file:
+            file.write(encrypted_data)
+
+    def _decrypt_credentials(self):
+        try:
+            key = self._load_key()
+            f = Fernet(key)
+            with open(self._get_credentials_path(), 'rb') as file:
+                encrypted_data = file.read()
+            decrypted_data = f.decrypt(encrypted_data)
+            credentials = json.loads(decrypted_data.decode())
+            return credentials['email'], credentials['password']
+        except Exception:
+            return None, None
+
+    def _has_saved_credentials(self):
+        return os.path.exists(self._get_credentials_path())
+
+    @staticmethod
+    def get_credentials():
+        from getpass import getpass
+        instance = LinkedInLogin("", "")  # Instância temporária para acessar os métodos
+        
+        if instance._has_saved_credentials():
+            use_saved = input("Credenciais salvas encontradas. Deseja utilizá-las? (s/n): ").lower()
+            if use_saved == 's':
+                email, password = instance._decrypt_credentials()
+                if email and password:
+                    print("Credenciais recuperadas com sucesso!")
+                    return email, password
+                print("Erro ao recuperar credenciais salvas.")
+
+        email = input("Digite seu email do LinkedIn: ")
+        password = getpass("Digite sua senha do LinkedIn: ")
+        save_credentials = input("Deseja salvar estas credenciais para uso futuro? (s/n): ").lower()
+        
+        if save_credentials == 's':
+            instance._encrypt_credentials(email, password)
+            print("Credenciais salvas com sucesso!")
+            
+        return email, password

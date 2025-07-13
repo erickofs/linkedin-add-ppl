@@ -21,8 +21,6 @@ def conn_level_input():
 
 def main():
     print("=== LinkedIn Connection Automation ===\n")
-    email = input("Digite seu e-mail do LinkedIn: ")
-    password = getpass("Digite sua senha do LinkedIn: ")
     search_term = input("Digite o termo de pesquisa no LinkedIn: ")
     
     # Coleta múltiplos níveis de conexão
@@ -40,7 +38,7 @@ def main():
     pages_input = input("Páginas: ").strip()
     num_pages = int(pages_input) if pages_input.isdigit() and int(pages_input) > 0 else 3
 
-    linkedin = LinkedInLogin(email, password)
+    linkedin = LinkedInLogin()
     try:
         linkedin.start_browser(headless=False)
         linkedin.login()
